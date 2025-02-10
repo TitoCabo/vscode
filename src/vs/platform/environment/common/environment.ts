@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { URI } from 'vs/base/common/uri';
-import { NativeParsedArgs } from 'vs/platform/environment/common/argv';
-import { createDecorator, refineServiceDecorator } from 'vs/platform/instantiation/common/instantiation';
+import { URI } from '../../../base/common/uri.js';
+import { NativeParsedArgs } from './argv.js';
+import { createDecorator, refineServiceDecorator } from '../../instantiation/common/instantiation.js';
 
 export const IEnvironmentService = createDecorator<IEnvironmentService>('environmentService');
 export const INativeEnvironmentService = refineServiceDecorator<IEnvironmentService, INativeEnvironmentService>(IEnvironmentService);
@@ -61,13 +61,11 @@ export interface IEnvironmentService {
 
 	// --- settings sync
 	userDataSyncHome: URI;
-	userDataSyncLogResource: URI;
 	sync: 'on' | 'off' | undefined;
 
 	// --- continue edit session
 	continueOn?: string;
 	editSessionId?: string;
-	editSessionsLogResource: URI;
 
 	// --- extension development
 	debugExtensionHost: IExtensionHostDebugParams;
@@ -79,15 +77,14 @@ export interface IEnvironmentService {
 	extensionTestsLocationURI?: URI;
 
 	// --- logging
-	logsPath: string;
+	logsHome: URI;
 	logLevel?: string;
+	extensionLogLevel?: [string, string][];
 	verbose: boolean;
 	isBuilt: boolean;
 
 	// --- telemetry
 	disableTelemetry: boolean;
-	telemetryLogResource: URI;
-	extensionTelemetryLogResource: URI;
 	serviceMachineIdResource: URI;
 
 	// --- Policy
@@ -138,15 +135,14 @@ export interface INativeEnvironmentService extends IEnvironmentService {
 	tmpDir: URI;
 	userDataPath: string;
 	machineSettingsResource: URI;
-	installSourcePath: string;
 
 	// --- extensions
 	extensionsPath: string;
-	extensionsDownloadPath: string;
+	extensionsDownloadLocation: URI;
 	builtinExtensionsPath: string;
 
-	// --- use keytar for credentials
-	disableKeytar?: boolean;
+	// --- use in-memory Secret Storage
+	useInMemorySecretStorage?: boolean;
 
 	crossOriginIsolated?: boolean;
 
