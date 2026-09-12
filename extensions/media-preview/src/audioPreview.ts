@@ -4,12 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import * as nls from 'vscode-nls';
 import { BinarySizeStatusBarEntry } from './binarySizeStatusBarEntry';
-import { MediaPreview, reopenAsText } from './mediaPreview';
-import { escapeAttribute, getNonce } from './util/dom';
-
-const localize = nls.loadMessageBundle();
+import { MediaPreview, isGitLfsPointer, reopenAsText } from './mediaPreview';
+import { escapeAttribute } from './util/dom';
+import { generateUuid } from './util/uuid';
 
 class AudioPreviewProvider implements vscode.CustomReadonlyEditorProvider {
 
@@ -56,13 +54,15 @@ class AudioPreview extends MediaPreview {
 
 	protected async getWebviewContents(): Promise<string> {
 		const version = Date.now().toString();
+		const src = await this.getResourcePath(this._webviewEditor, this._resource, version);
 		const settings = {
-			src: await this.getResourcePath(this.webviewEditor, this.resource, version),
+			src,
+			isGitLfs: src === null,
 		};
 
-		const nonce = getNonce();
+		const nonce = generateUuid();
 
-		const cspSource = this.webviewEditor.webview.cspSource;
+		const cspSource = this._webviewEditor.webview.cspSource;
 		return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -79,11 +79,15 @@ class AudioPreview extends MediaPreview {
 	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; media-src ${cspSource}; script-src 'nonce-${nonce}'; style-src ${cspSource} 'nonce-${nonce}';">
 	<meta id="settings" data-settings="${escapeAttribute(JSON.stringify(settings))}">
 </head>
-<body class="container loading">
+<body class="container loading" data-vscode-context='{ "preventDefaultContextMenuItems": true }'>
 	<div class="loading-indicator"></div>
 	<div class="loading-error">
-		<p>${localize('preview.audioLoadError', "An error occurred while loading the audio file.")}</p>
-		<a href="#" class="open-file-link">${localize('preview.audioLoadErrorLink', "Open file using VS Code's standard text/binary editor?")}</a>
+		<p>${vscode.l10n.t("An error occurred while loading the audio file.")}</p>
+		<a href="#" class="open-file-link">${vscode.l10n.t("Open file using VS Code's standard text/binary editor?")}</a>
+	</div>
+	<div class="git-lfs-info">
+		<p>${vscode.l10n.t("The audio file is stored with Git LFS and is not available for preview.")}</p>
+		<a href="#" class="open-file-link">${vscode.l10n.t("Open file using VS Code's standard text/binary editor?")}</a>
 	</div>
 	<script src="${escapeAttribute(this.extensionResource('media', 'audioPreview.js'))}" nonce="${nonce}"></script>
 </body>
@@ -91,12 +95,8 @@ class AudioPreview extends MediaPreview {
 	}
 
 	private async getResourcePath(webviewEditor: vscode.WebviewPanel, resource: vscode.Uri, version: string): Promise<string | null> {
-		if (resource.scheme === 'git') {
-			const stat = await vscode.workspace.fs.stat(resource);
-			if (stat.size === 0) {
-				// The file is stored on git lfs
-				return null;
-			}
+		if (await isGitLfsPointer(resource)) {
+			return null;
 		}
 
 		// Avoid adding cache busting if there is already a query string
@@ -107,7 +107,7 @@ class AudioPreview extends MediaPreview {
 	}
 
 	private extensionResource(...parts: string[]) {
-		return this.webviewEditor.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionRoot, ...parts));
+		return this._webviewEditor.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionRoot, ...parts));
 	}
 }
 

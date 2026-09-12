@@ -4,18 +4,20 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { session } from 'electron';
-import { validatedIpcMain } from 'vs/base/parts/ipc/electron-main/ipcMain';
-import { Disposable, IDisposable, toDisposable } from 'vs/base/common/lifecycle';
-import { TernarySearchTree } from 'vs/base/common/map';
-import { COI, FileAccess, Schemas } from 'vs/base/common/network';
-import { basename, extname, normalize } from 'vs/base/common/path';
-import { isLinux } from 'vs/base/common/platform';
-import { URI } from 'vs/base/common/uri';
-import { generateUuid } from 'vs/base/common/uuid';
-import { INativeEnvironmentService } from 'vs/platform/environment/common/environment';
-import { ILogService } from 'vs/platform/log/common/log';
-import { IIPCObjectUrl, IProtocolMainService } from 'vs/platform/protocol/electron-main/protocol';
-import { IUserDataProfilesService } from 'vs/platform/userDataProfile/common/userDataProfile';
+import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
+import { COI, FileAccess, Schemas, CacheControlheaders, DocumentPolicyheaders } from '../../../base/common/network.js';
+import { basename, extname, normalize } from '../../../base/common/path.js';
+import { isLinux } from '../../../base/common/platform.js';
+import { TernarySearchTree } from '../../../base/common/ternarySearchTree.js';
+import { URI } from '../../../base/common/uri.js';
+import { generateUuid } from '../../../base/common/uuid.js';
+import { validatedIpcMain } from '../../../base/parts/ipc/electron-main/ipcMain.js';
+import { INativeEnvironmentService } from '../../environment/common/environment.js';
+import { ILogService } from '../../log/common/log.js';
+import { NodeRemoteResourceResponse } from '../../remote/common/electronRemoteResources.js';
+import { createManagedRemoteResourceRequestHandler } from './managedRemoteResourceProtocol.js';
+import { IIPCObjectUrl, IProtocolMainService } from './protocol.js';
+import { IUserDataProfilesService } from '../../userDataProfile/common/userDataProfile.js';
 
 type ProtocolCallback = { (result: string | Electron.FilePathWithHeaders | { error: number }): void };
 
@@ -24,7 +26,7 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 	declare readonly _serviceBrand: undefined;
 
 	private readonly validRoots = TernarySearchTree.forPaths<boolean>(!isLinux);
-	private readonly validExtensions = new Set(['.svg', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp']); // https://github.com/microsoft/vscode/issues/119384
+	private readonly validExtensions = new Set(['.svg', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.mp4', '.otf', '.ttf']); // https://github.com/microsoft/vscode/issues/119384
 
 	constructor(
 		@INativeEnvironmentService private readonly environmentService: INativeEnvironmentService,
@@ -39,8 +41,8 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 		// - storage    : all files in global and workspace storage (https://github.com/microsoft/vscode/issues/116735)
 		this.addValidFileRoot(environmentService.appRoot);
 		this.addValidFileRoot(environmentService.extensionsPath);
-		this.addValidFileRoot(userDataProfilesService.defaultProfile.globalStorageHome.fsPath);
-		this.addValidFileRoot(environmentService.workspaceStorageHome.fsPath);
+		this.addValidFileRoot(userDataProfilesService.defaultProfile.globalStorageHome.with({ scheme: Schemas.file }).fsPath);
+		this.addValidFileRoot(environmentService.workspaceStorageHome.with({ scheme: Schemas.file }).fsPath);
 
 		// Handle protocols
 		this.handleProtocols();
@@ -77,6 +79,14 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 		return Disposable.None;
 	}
 
+	registerManagedRemoteResourceProtocol(requestRemoteResource: (url: URI) => Promise<NodeRemoteResourceResponse>): void {
+		session.defaultSession.protocol.registerBufferProtocol(
+			Schemas.vscodeManagedRemoteResource,
+			createManagedRemoteResourceRequestHandler(requestRemoteResource, this.logService)
+		);
+		this._register(toDisposable(() => session.defaultSession.protocol.unregisterProtocol(Schemas.vscodeManagedRemoteResource)));
+	}
+
 	//#region file://
 
 	private handleFileRequest(request: Electron.ProtocolRequest, callback: ProtocolCallback) {
@@ -93,14 +103,34 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 	private handleResourceRequest(request: Electron.ProtocolRequest, callback: ProtocolCallback): void {
 		const path = this.requestToNormalizedFilePath(request);
+		const pathBasename = basename(path);
 
 		let headers: Record<string, string> | undefined;
 		if (this.environmentService.crossOriginIsolated) {
-			if (basename(path) === 'workbench.html' || basename(path) === 'workbench-dev.html') {
+			if (pathBasename === 'workbench.html' || pathBasename === 'workbench-dev.html') {
 				headers = COI.CoopAndCoep;
 			} else {
 				headers = COI.getHeadersFromQuery(request.url);
 			}
+		}
+
+		// In OSS, evict resources from the memory cache in the renderer process
+		// Refs https://github.com/microsoft/vscode/issues/148541#issuecomment-2670891511
+		if (!this.environmentService.isBuilt) {
+			headers = {
+				...headers,
+				...CacheControlheaders
+			};
+		}
+
+		// Document-policy header is needed for collecting
+		// JavaScript callstacks via https://www.electronjs.org/docs/latest/api/web-frame-main#framecollectjavascriptcallstack-experimental
+		// until https://github.com/electron/electron/issues/45356 is resolved.
+		if (pathBasename === 'workbench.html' || pathBasename === 'workbench-dev.html') {
+			headers = {
+				...headers,
+				...DocumentPolicyheaders
+			};
 		}
 
 		// first check by validRoots
@@ -110,7 +140,7 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 		// then check by validExtensions
 		if (this.validExtensions.has(extname(path).toLowerCase())) {
-			return callback({ path });
+			return callback({ path, headers });
 		}
 
 		// finally block to load the resource
@@ -127,7 +157,7 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 		// 2.) Use `FileAccess.asFileUri` to convert back from a
 		//     `vscode-file:` URI to a `file:` URI.
-		const unnormalizedFileUri = FileAccess.asFileUri(requestUri);
+		const unnormalizedFileUri = FileAccess.uriToFileUri(requestUri);
 
 		// 3.) Strip anything from the URI that could result in
 		//     relative paths (such as "..") by using `normalize`

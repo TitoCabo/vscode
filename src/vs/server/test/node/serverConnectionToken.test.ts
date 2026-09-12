@@ -3,15 +3,18 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as assert from 'assert';
+import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
-import * as path from 'path';
-import { getRandomTestPath } from 'vs/base/test/node/testUtils';
-import { parseServerConnectionToken, ServerConnectionToken, ServerConnectionTokenParseError, ServerConnectionTokenType } from 'vs/server/node/serverConnectionToken';
-import { ServerParsedArgs } from 'vs/server/node/serverEnvironmentService';
+import { join } from '../../../base/common/path.js';
+import { connectionTokenCookieName, connectionTokenQueryName } from '../../../base/common/network.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../base/test/common/utils.js';
+import { getRandomTestPath } from '../../../base/test/node/testUtils.js';
+import { MandatoryServerConnectionToken, parseServerConnectionToken, requestHasValidConnectionToken, ServerConnectionToken, ServerConnectionTokenParseError, ServerConnectionTokenType } from '../../node/serverConnectionToken.js';
+import { getRedactedServerParsedArgs, ServerParsedArgs } from '../../node/serverEnvironmentService.js';
 
 suite('parseServerConnectionToken', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
 
 	function isError(r: ServerConnectionToken | ServerConnectionTokenParseError): r is ServerConnectionTokenParseError {
 		return (r instanceof ServerConnectionTokenParseError);
@@ -25,13 +28,6 @@ suite('parseServerConnectionToken', () => {
 		const result = await parseServerConnectionToken({} as ServerParsedArgs, async () => 'defaultTokenValue');
 		assert.ok(!(result instanceof ServerConnectionTokenParseError));
 		assert.ok(result.type === ServerConnectionTokenType.Mandatory);
-	});
-
-	test('no arguments with --compatibility generates a token that is not mandatory', async () => {
-		const result = await parseServerConnectionToken({ 'compatibility': '1.63' } as ServerParsedArgs, async () => 'defaultTokenValue');
-		assert.ok(!(result instanceof ServerConnectionTokenParseError));
-		assert.ok(result.type === ServerConnectionTokenType.Optional);
-		assert.strictEqual(result.value, 'defaultTokenValue');
 	});
 
 	test('--without-connection-token', async () => {
@@ -56,7 +52,7 @@ suite('parseServerConnectionToken', () => {
 		this.timeout(10000);
 		const testDir = getRandomTestPath(os.tmpdir(), 'vsctests', 'server-connection-token');
 		fs.mkdirSync(testDir, { recursive: true });
-		const filename = path.join(testDir, 'connection-token-file');
+		const filename = join(testDir, 'connection-token-file');
 		const connectionToken = `12345-123-abc`;
 		fs.writeFileSync(filename, connectionToken);
 		const result = await parseServerConnectionToken({ 'connection-token-file': filename } as ServerParsedArgs, async () => 'defaultTokenValue');
@@ -74,11 +70,56 @@ suite('parseServerConnectionToken', () => {
 		assert.strictEqual(result.value, connectionToken);
 	});
 
-	test('--connection-token --compatibility marks a as not mandatory', async () => {
-		const connectionToken = `12345-123-abc`;
-		const result = await parseServerConnectionToken({ 'connection-token': connectionToken, 'compatibility': '1.63' } as ServerParsedArgs, async () => 'defaultTokenValue');
-		assert.ok(!(result instanceof ServerConnectionTokenParseError));
-		assert.ok(result.type === ServerConnectionTokenType.Optional);
-		assert.strictEqual(result.value, connectionToken);
+});
+
+suite('requestHasValidConnectionToken', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const connectionToken = new MandatoryServerConnectionToken('valid token');
+
+	test('validates a decoded query parameter', () => {
+		const searchParams = new URLSearchParams(`${connectionTokenQueryName}=valid+token`);
+
+		assert.strictEqual(requestHasValidConnectionToken(connectionToken, { headers: {} }, searchParams), true);
+	});
+
+	test('rejects repeated query parameters', () => {
+		const searchParams = new URLSearchParams(`${connectionTokenQueryName}=valid+token&${connectionTokenQueryName}=valid+token`);
+
+		assert.strictEqual(requestHasValidConnectionToken(connectionToken, { headers: {} }, searchParams), false);
+	});
+
+	test('falls back to a cookie', () => {
+		const headers = { cookie: `${connectionTokenCookieName}=valid%20token` };
+
+		assert.strictEqual(requestHasValidConnectionToken(connectionToken, { headers }, new URLSearchParams()), true);
+	});
+});
+
+suite('getRedactedServerParsedArgs', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('redacts connection tokens without changing the original arguments', () => {
+		const args = {
+			'connection-token': 'server-token',
+			'agent-host-bridge-connection-token': 'bridge-token',
+			'agent-host-bridge-port': '9000',
+		} as ServerParsedArgs;
+
+		assert.deepStrictEqual({
+			redactedArgs: getRedactedServerParsedArgs(args),
+			args,
+		}, {
+			redactedArgs: {
+				'connection-token': '<redacted>',
+				'agent-host-bridge-connection-token': '<redacted>',
+				'agent-host-bridge-port': '9000',
+			},
+			args: {
+				'connection-token': 'server-token',
+				'agent-host-bridge-connection-token': 'bridge-token',
+				'agent-host-bridge-port': '9000',
+			},
+		});
 	});
 });

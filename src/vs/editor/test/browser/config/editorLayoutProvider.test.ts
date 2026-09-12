@@ -3,9 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as assert from 'assert';
-import { EditorLayoutInfo, EditorLayoutInfoComputer, RenderMinimap, EditorOption, EditorMinimapOptions, InternalEditorScrollbarOptions, EditorOptions, RenderLineNumbersType, InternalEditorRenderLineNumbersOptions } from 'vs/editor/common/config/editorOptions';
-import { ComputedEditorOptions } from 'vs/editor/browser/config/editorConfiguration';
+import assert from 'assert';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+import { ComputedEditorOptions } from '../../../browser/config/editorConfiguration.js';
+import { EditorLayoutInfo, EditorLayoutInfoComputer, EditorMinimapOptions, EditorOption, EditorOptions, InternalEditorRenderLineNumbersOptions, InternalEditorScrollbarOptions, RenderLineNumbersType, RenderMinimap } from '../../../common/config/editorOptions.js';
 
 interface IEditorLayoutProviderOpts {
 	readonly outerWidth: number;
@@ -35,25 +36,40 @@ interface IEditorLayoutProviderOpts {
 	readonly minimapMaxColumn: number;
 	minimapSize?: 'proportional' | 'fill' | 'fit';
 	readonly pixelRatio: number;
+
+	/**
+	 * Defaults to `'off'`, i.e. to a layout that does not wrap at all.
+	 */
+	readonly wordWrap?: 'off' | 'on' | 'wordWrapColumn' | 'bounded';
+	readonly wordWrapColumn?: number;
+	readonly wordWrapIndicator?: boolean;
 }
 
 suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
-	function doTest(input: IEditorLayoutProviderOpts, expected: EditorLayoutInfo): void {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	function computeLayoutInfo(input: IEditorLayoutProviderOpts): EditorLayoutInfo {
 		const options = new ComputedEditorOptions();
 		options._write(EditorOption.glyphMargin, input.showGlyphMargin);
 		options._write(EditorOption.lineNumbersMinChars, input.lineNumbersMinChars);
 		options._write(EditorOption.lineDecorationsWidth, input.lineDecorationsWidth);
 		options._write(EditorOption.folding, false);
+		options._write(EditorOption.padding, { top: 0, bottom: 0 });
 		const minimapOptions: EditorMinimapOptions = {
 			enabled: input.minimap,
-			autohide: false,
+			autohide: 'none',
 			size: input.minimapSize || 'proportional',
 			side: input.minimapSide,
 			renderCharacters: input.minimapRenderCharacters,
 			maxColumn: input.minimapMaxColumn,
 			showSlider: 'mouseover',
 			scale: 1,
+			showRegionSectionHeaders: true,
+			showMarkSectionHeaders: true,
+			sectionHeaderFontSize: 9,
+			sectionHeaderLetterSpacing: 1,
+			markSectionHeaderRegex: '\\bMARK:\\s*(?<separator>\-?)\\s*(?<label>.*)$',
 		};
 		options._write(EditorOption.minimap, minimapOptions);
 		const scrollbarOptions: InternalEditorScrollbarOptions = {
@@ -70,6 +86,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 			verticalScrollbarSize: input.verticalScrollbarWidth,
 			verticalSliderSize: EditorOptions.scrollbar.defaultValue.verticalSliderSize,
 			scrollByPage: EditorOptions.scrollbar.defaultValue.scrollByPage,
+			ignoreHorizontalScrollbarInContentHeight: false,
 		};
 		options._write(EditorOption.scrollbar, scrollbarOptions);
 		const lineNumbersOptions: InternalEditorRenderLineNumbersOptions = {
@@ -78,8 +95,9 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 		};
 		options._write(EditorOption.lineNumbers, lineNumbersOptions);
 
-		options._write(EditorOption.wordWrap, 'off');
-		options._write(EditorOption.wordWrapColumn, 80);
+		options._write(EditorOption.wordWrap, input.wordWrap ?? 'off');
+		options._write(EditorOption.wordWrapColumn, input.wordWrapColumn ?? 80);
+		options._write(EditorOption.wordWrapIndicator, input.wordWrapIndicator ?? false);
 		options._write(EditorOption.wordWrapOverride1, 'inherit');
 		options._write(EditorOption.wordWrapOverride2, 'inherit');
 		options._write(EditorOption.accessibilitySupport, 'auto');
@@ -95,8 +113,13 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 			typicalHalfwidthCharacterWidth: input.typicalHalfwidthCharacterWidth,
 			maxDigitWidth: input.maxDigitWidth,
 			pixelRatio: input.pixelRatio,
+			glyphMarginDecorationLaneCount: 1,
 		});
-		assert.deepStrictEqual(actual, expected);
+		return actual;
+	}
+
+	function doTest(input: IEditorLayoutProviderOpts, expected: EditorLayoutInfo): void {
+		assert.deepStrictEqual(computeLayoutInfo(input), expected);
 	}
 
 	test('EditorLayoutProvider 1', () => {
@@ -126,6 +149,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -194,6 +218,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -262,6 +287,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -330,6 +356,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -398,6 +425,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -466,6 +494,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 50,
@@ -534,6 +563,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 50,
@@ -602,6 +632,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 60,
@@ -670,6 +701,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 30,
@@ -738,6 +770,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 30,
@@ -806,6 +839,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -874,6 +908,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -942,6 +977,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -1010,6 +1046,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 55,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 55,
 			lineNumbersWidth: 0,
@@ -1080,6 +1117,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -1150,6 +1188,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -1220,6 +1259,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -1290,6 +1330,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 0,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 0,
 			lineNumbersWidth: 0,
@@ -1358,6 +1399,7 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 
 			glyphMarginLeft: 0,
 			glyphMarginWidth: 30,
+			glyphMarginDecorationLaneCount: 1,
 
 			lineNumbersLeft: 30,
 			lineNumbersWidth: 36,
@@ -1398,5 +1440,63 @@ suite('Editor ViewLayout - EditorLayoutProvider', () => {
 			}
 		});
 
+	});
+
+	test('leaves the rightmost column for the word wrap indicator when wrapping to the viewport', () => {
+		// 990px of content at 10px per character hold 98 columns once the 2px kept free for the
+		// cursor are taken off. The indicator occupies the rightmost column, so wrapped text needs
+		// to stop one column earlier rather than overlap the glyph.
+		const wrappingOf = (wordWrap: 'off' | 'on' | 'wordWrapColumn' | 'bounded', wordWrapIndicator: boolean, wordWrapColumn = 40) => {
+			const layoutInfo = computeLayoutInfo({
+				outerWidth: 1000,
+				outerHeight: 800,
+				showGlyphMargin: false,
+				lineHeight: 16,
+				showLineNumbers: false,
+				lineNumbersMinChars: 0,
+				lineNumbersDigitCount: 1,
+				lineDecorationsWidth: 10,
+				typicalHalfwidthCharacterWidth: 10,
+				maxDigitWidth: 10,
+				verticalScrollbarWidth: 0,
+				verticalScrollbarHasArrows: false,
+				scrollbarArrowSize: 0,
+				horizontalScrollbarHeight: 0,
+				minimap: false,
+				minimapSide: 'right',
+				minimapRenderCharacters: true,
+				minimapMaxColumn: 150,
+				pixelRatio: 1,
+				wordWrap,
+				wordWrapColumn,
+				wordWrapIndicator
+			});
+			// `viewportColumn` keeps describing how many columns the viewport holds, so that the
+			// minimap, which is sized from the same width, is unaffected by the indicator.
+			return { viewportColumn: layoutInfo.viewportColumn, wrappingColumn: layoutInfo.wrappingColumn };
+		};
+
+		assert.deepStrictEqual(
+			{
+				off: wrappingOf('off', true),
+				on: wrappingOf('on', false),
+				onWithIndicator: wrappingOf('on', true),
+				// Both bound the wrapping column well below the viewport, so there already is
+				// spare width for the glyph to land in.
+				bounded: wrappingOf('bounded', false),
+				boundedWithIndicator: wrappingOf('bounded', true),
+				wordWrapColumnWithIndicator: wrappingOf('wordWrapColumn', true),
+				wideWordWrapColumnWithIndicator: wrappingOf('wordWrapColumn', true, 120)
+			},
+			{
+				off: { viewportColumn: 98, wrappingColumn: -1 },
+				on: { viewportColumn: 98, wrappingColumn: 98 },
+				onWithIndicator: { viewportColumn: 98, wrappingColumn: 97 },
+				bounded: { viewportColumn: 98, wrappingColumn: 40 },
+				boundedWithIndicator: { viewportColumn: 98, wrappingColumn: 40 },
+				wordWrapColumnWithIndicator: { viewportColumn: 98, wrappingColumn: 40 },
+				wideWordWrapColumnWithIndicator: { viewportColumn: 98, wrappingColumn: 120 }
+			}
+		);
 	});
 });

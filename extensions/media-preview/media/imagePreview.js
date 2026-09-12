@@ -61,6 +61,7 @@
 	const settings = getSettings();
 	const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
+	// @ts-ignore
 	const vscode = acquireVsCodeApi();
 
 	const initialState = vscode.getState() || { scale: 'fit', offsetX: 0, offsetY: 0 };
@@ -88,6 +89,9 @@
 			image.classList.remove('pixelated');
 			// @ts-ignore Non-standard CSS property
 			image.style.zoom = 'normal';
+			// Clear explicit dimensions so the image can scale-to-fit naturally
+			image.style.minWidth = '';
+			image.style.minHeight = '';
 			vscode.setState(undefined);
 		} else {
 			scale = clamp(newScale, MIN_SCALE, MAX_SCALE);
@@ -101,6 +105,17 @@
 			const dy = (window.scrollY + container.clientHeight / 2) / container.scrollHeight;
 
 			image.classList.remove('scale-to-fit');
+
+			// For images without intrinsic dimensions (e.g. SVGs with only
+			// a viewBox), set explicit pixel dimensions so that CSS zoom has
+			// something concrete to scale.
+			if (!image.naturalWidth || !image.naturalHeight) {
+				const baseWidth = image.clientWidth || container.clientWidth;
+				const baseHeight = image.clientHeight || container.clientHeight;
+				image.style.minWidth = baseWidth + 'px';
+				image.style.minHeight = baseHeight + 'px';
+			}
+
 			// @ts-ignore Non-standard CSS property
 			image.style.zoom = scale;
 
@@ -141,7 +156,14 @@
 			return;
 		}
 
-		scale = image.clientWidth / image.naturalWidth;
+		if (image.naturalWidth) {
+			scale = image.clientWidth / image.naturalWidth;
+		} else {
+			// For images without intrinsic dimensions (e.g. SVGs with
+			// only a viewBox), start at 1x since there is no meaningful
+			// natural size to compute a ratio from.
+			scale = 1;
+		}
 		updateScale(scale);
 	}
 
@@ -305,14 +327,27 @@
 			return;
 		}
 
+		console.error('Error loading image', e);
+
 		hasLoadedImage = true;
 		document.body.classList.add('error');
 		document.body.classList.remove('loading');
 	});
 
-	image.src = settings.src;
+	if (settings.isGitLfs) {
+		hasLoadedImage = true;
+		document.body.classList.add('git-lfs');
+		document.body.classList.remove('loading');
+	} else if (settings.src === null) {
+		hasLoadedImage = true;
+		document.body.classList.add('error');
+		document.body.classList.remove('loading');
+	} else {
+		image.src = settings.src;
+	}
 
-	document.querySelector('.open-file-link').addEventListener('click', () => {
+	document.querySelector('.open-file-link')?.addEventListener('click', (e) => {
+		e.preventDefault();
 		vscode.postMessage({
 			type: 'reopen-as-text',
 		});
@@ -325,21 +360,57 @@
 		}
 
 		switch (e.data.type) {
-			case 'setScale':
+			case 'setScale': {
 				updateScale(e.data.scale);
 				break;
-
-			case 'setActive':
+			}
+			case 'setActive': {
 				setActive(e.data.value);
 				break;
-
-			case 'zoomIn':
+			}
+			case 'zoomIn': {
 				zoomIn();
 				break;
-
-			case 'zoomOut':
+			}
+			case 'zoomOut': {
 				zoomOut();
 				break;
+			}
+			case 'copyImage': {
+				copyImage();
+				break;
+			}
 		}
 	});
+
+	document.addEventListener('copy', () => {
+		copyImage();
+	});
+
+	async function copyImage(retries = 5) {
+		if (!document.hasFocus() && retries > 0) {
+			// copyImage is called at the same time as webview.reveal, which means this function is running whilst the webview is gaining focus.
+			// Since navigator.clipboard.write requires the document to be focused, we need to wait for focus.
+			// We cannot use a listener, as there is a high chance the focus is gained during the setup of the listener resulting in us missing it.
+			setTimeout(() => { copyImage(retries - 1); }, 20);
+			return;
+		}
+
+		try {
+			await navigator.clipboard.write([new ClipboardItem({
+				'image/png': new Promise((resolve, reject) => {
+					const canvas = document.createElement('canvas');
+					canvas.width = image.naturalWidth;
+					canvas.height = image.naturalHeight;
+					canvas.getContext('2d').drawImage(image, 0, 0);
+					canvas.toBlob((blob) => {
+						resolve(blob);
+						canvas.remove();
+					}, 'image/png');
+				})
+			})]);
+		} catch (e) {
+			console.error(e);
+		}
+	}
 }());
